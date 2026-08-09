@@ -7,6 +7,8 @@ name: OCI RDP Retry
 
 on:
   workflow_dispatch:          # lancement manuel
+  push:                       # déclenchement à chaque push (force indexation)
+    branches: [master]
   schedule:                   # secours : relance toutes les 6h
     - cron: '0 */6 * * *'
 
