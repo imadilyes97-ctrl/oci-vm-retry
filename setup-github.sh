@@ -8,7 +8,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-REPO="oci-vm-retry"
+REPO="imadilyes97-ctrl/oci-vm-retry"
 SRC="$HOME/Desktop/oci-rdp"
 CONFIG="$HOME/.oci/config"
 KEY="$HOME/.oci/oci_api_key.pem"
