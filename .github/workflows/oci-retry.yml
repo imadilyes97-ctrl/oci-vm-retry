@@ -1,0 +1,72 @@
+name: OCI RDP Retry
+
+# Retry VM Oracle Cloud (Ampere A1, Marseille) toutes les 30s, gratuit et
+# continu — tourne sur GitHub Actions (dépôt PUBLIC = minutes illimitées).
+# Se re-déclenche lui-même avant le timeout pour ne jamais s'arrêter tant que
+# la VM n'existe pas. Notifie via ntfy.sh dès que la VM est créée.
+
+on:
+  workflow_dispatch:          # lancement manuel
+  schedule:                   # secours : relance toutes les 6h
+    - cron: '0 */6 * * *'
+
+# Un seul run à la fois : un nouveau run annule l'ancien (et re-vérifie la VM).
+concurrency:
+  group: oci-retry
+  cancel-in-progress: true
+
+permissions:
+  actions: write   # pour que le run puisse se re-déclencher (gh workflow run)
+  contents: read
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340      # GitHub tue le job à 340 min — on relance avant.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install OCI CLI
+        run: pip install oci-cli
+
+      - name: Run retry loop (self-rearming)
+        shell: bash
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_AD: ${{ secrets.OCI_AD }}
+          OCI_IMAGE: ${{ secrets.OCI_IMAGE }}
+          OCI_SUBNET: ${{ secrets.OCI_SUBNET }}
+          OCI_SECURITY_LIST: ${{ secrets.OCI_SECURITY_LIST }}
+          OCI_VOLUME: ${{ secrets.OCI_VOLUME }}
+          OCI_SSH_PUB: ${{ secrets.OCI_SSH_PUB }}
+          OCI_SHAPE_CONFIG: ${{ secrets.OCI_SHAPE_CONFIG }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -u
+          # Lance la boucle de retry (toutes les 30s) en arrière-plan.
+          bash scripts/oci-retry.sh &
+          RETRY_PID=$!
+          # Surveille jusqu'à ~330 min. Si le script se termine (succès OU
+          # échec final), on sort avec son code.
+          for i in $(seq 1 660); do   # 660 × 30s = 330 min
+            if ! kill -0 "$RETRY_PID" 2>/dev/null; then
+              wait "$RETRY_PID"
+              exit $?
+            fi
+            sleep 30
+          done
+          # 330 min écoulées et la VM n'est pas créée → relance un run pour
+          # continuer sans interruption (le nouveau run re-vérifie la VM).
+          echo "== 330 min — relance d'un nouveau run (continue) =="
+          gh workflow run oci-retry.yml 2>&1 | tail -2 || true
+          # Attend la fin de la boucle (le nouveau run annule celui-ci via concurrency).
+          wait "$RETRY_PID"
+          exit $?
