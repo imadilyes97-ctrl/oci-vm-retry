@@ -43,7 +43,10 @@ while true; do
   TRIES=$((TRIES + 1))
   log "Tentative $TRIES ..."
 
-  OUT=$("$OCI" compute instance launch \
+  # timeout 25 : borne la durée de l'appel OCI (qui peut traîner 300s+ quand la
+  # région est chargée). Si OCI ne répond pas en 25s → on passe à la tentative
+  # suivante dans 30s → cadence RÉELLE bornée à ~55s max (jamais 2-5 min).
+  OUT=$(timeout 25 "$OCI" compute instance launch \
     --compartment-id "$OCI_TENANCY" \
     --availability-domain "$OCI_AD" \
     --shape "VM.Standard.A1.Flex" \
