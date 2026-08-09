@@ -57,6 +57,7 @@ while true; do
     --display-name "rdp-main" \
     --ssh-authorized-keys-file "$SSHFILE" \
     --boot-volume-size-in-gbs 100 2>&1)
+  RC=$?
 
   VMID=$(echo "$OUT" | grep -o 'ocid1.instance[^"]*' | head -1)
   if [ -n "$VMID" ]; then
@@ -65,7 +66,11 @@ while true; do
     exit 0
   fi
 
-  MSG=$(echo "$OUT" | grep -o '"message": "[^"]*"' | head -1 | cut -d'"' -f4)
-  log "   -> ${MSG:-échec inconnu}"
+  if [ "$RC" -eq 124 ]; then
+    log "   -> timeout 25s (OCI lent — tentative suivante dans 30s)"
+  else
+    MSG=$(echo "$OUT" | grep -o '"message": "[^"]*"' | head -1 | cut -d'"' -f4)
+    log "   -> ${MSG:-échec inconnu (rc=$RC)}"
+  fi
   sleep 30
 done
