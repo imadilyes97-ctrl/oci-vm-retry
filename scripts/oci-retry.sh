@@ -43,10 +43,12 @@ while true; do
   TRIES=$((TRIES + 1))
   log "Tentative $TRIES ..."
 
-  # timeout 25 : borne la durée de l'appel OCI (qui peut traîner 300s+ quand la
-  # région est chargée). Si OCI ne répond pas en 25s → on passe à la tentative
-  # suivante dans 30s → cadence RÉELLE bornée à ~55s max (jamais 2-5 min).
-  OUT=$(timeout 25 "$OCI" compute instance launch \
+  # timeout 120 : la réponse OCI met souvent 90-120s quand la région est chargée
+  # (observé : "Too many requests" à ~97s). timeout 25 coupait TOUTES les réponses
+  # avant qu'elles n'arrivent → on voyait "timeout 25s (OCI lent)" au lieu du vrai
+  # message OCI. 120s > max observé → on reçoit la vraie réponse (capacity, too many…).
+  # Cadence réelle : tentative + réponse (~100s) + sleep 30 = ~130-150s.
+  OUT=$(timeout 120 "$OCI" compute instance launch \
     --compartment-id "$OCI_TENANCY" \
     --availability-domain "$OCI_AD" \
     --shape "VM.Standard.A1.Flex" \
@@ -67,10 +69,20 @@ while true; do
   fi
 
   if [ "$RC" -eq 124 ]; then
-    log "   -> timeout 25s (OCI lent — tentative suivante dans 30s)"
+    # timeout 120 atteint : la réponse OCI a mis >120s (très chargé). On log la
+    # sortie partielle si présente (une VM peut avoir été créée malgré le timeout).
+    PARTIAL=$(echo "$OUT" | grep -o 'ocid1.instance[^"]*' | head -1)
+    if [ -n "$PARTIAL" ]; then
+      log "   -> ⚠️ timeout 120s MAIS instance créée: $PARTIAL — vérifier, la notification est partie"
+      curl -s -d "⚠️ timeout OCI MAIS instance créée: $PARTIAL — vérifier sur OCI" "$NTFY_TOPIC" >/dev/null 2>&1 || true
+      exit 0
+    fi
+    log "   -> timeout 120s (aucune réponse OCI en 120s — tentative suivante dans 30s)"
   else
     MSG=$(echo "$OUT" | grep -o '"message": "[^"]*"' | head -1 | cut -d'"' -f4)
     log "   -> ${MSG:-échec inconnu (rc=$RC)}"
+    # Trace de debug : la sortie OCI brute (sans secrets — OCIDs = identifiants publics, pas des secrets)
+    [ -n "$OUT" ] && [ "$RC" -ne 124 ] && echo "$OUT" | grep -o '"code": "[^"]*"\|"message": "[^"]*"' | head -2 | sed 's/^/       /' | while read -r l; do log "$l"; done
   fi
   sleep 30
 done
