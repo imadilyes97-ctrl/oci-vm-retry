@@ -30,14 +30,32 @@ export OCI_CLI_REGION="$OCI_REGION"
 OCI="oci"
 log(){ echo "[$(date -u +%H:%M:%S)] $*"; }
 
-# ── 3. VM déjà créée ? → notification + arrêt (pas de re-déclenchement) ──
+# ── 3. Notification ntfy — URL COMPLÈTE obligatoire + échec tracé ──
+# 🔴 BUG FIX (2026-08-13) : le secret NTFY_TOPIC = NOM du topic seul
+# (ex: oci-rdp-xxx), pas une URL. `curl -d ... "$NTFY_TOPIC"` échouait
+# SILENCIEUSEMENT (protocol invalide, masqué par >/dev/null || true) →
+# la VM a été créée le 12/08 19:59 UTC sans AUCUNE notification.
+# Fix : construire https://ntfy.sh/<topic> + logguer le code HTTP.
+NTFY_URL="https://ntfy.sh/${NTFY_TOPIC:-}"
+notify(){
+  local msg="$1"
+  local code
+  [ -n "$NTFY_URL" ] || { log "   ⚠️ ntfy NON CONFIGURÉ (NTFY_TOPIC vide)"; return 0; }
+  code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' -d "$msg" "$NTFY_URL" 2>/dev/null)
+  case "$code" in
+    200) log "   ✔ ntfy OK (200)" ;;
+    *)   log "   ⚠️ ntfy ÉCHEC (HTTP '${code:-réseau}') — notification non reçue : $msg" ;;
+  esac
+}
+
+# ── 4. VM déjà créée ? → notification + arrêt (pas de re-déclenchement) ──
 if "$OCI" compute instance list --compartment-id "$OCI_TENANCY" --all 2>/dev/null | grep -q 'rdp-main'; then
   log "VM rdp-main existe déjà — rien à faire."
-  curl -s -d "VM Oracle RDP déjà créée ✅ (connexion: voir Oracle-RDP.rdp)" "$NTFY_TOPIC" >/dev/null 2>&1 || true
+  notify "VM Oracle RDP déjà créée ✅ (IP: voir Oracle-RDP.rdp)"
   exit 0
 fi
 
-# ── 4. Boucle de retry 30s ─────────────────────────────────────
+# ── 5. Boucle de retry 30s ─────────────────────────────────────
 TRIES=0
 while true; do
   TRIES=$((TRIES + 1))
@@ -64,7 +82,7 @@ while true; do
   VMID=$(echo "$OUT" | grep -o 'ocid1.instance[^"]*' | head -1)
   if [ -n "$VMID" ]; then
     log "✅✅ VM CREEE: $VMID"
-    curl -s -d "VM Oracle RDP créée ! OCID: $VMID — l'IP arrive, config en cours." "$NTFY_TOPIC" >/dev/null 2>&1 || true
+    notify "VM Oracle RDP créée ! OCID: $VMID — l'IP arrive, config en cours."
     exit 0
   fi
 
@@ -74,7 +92,7 @@ while true; do
     PARTIAL=$(echo "$OUT" | grep -o 'ocid1.instance[^"]*' | head -1)
     if [ -n "$PARTIAL" ]; then
       log "   -> ⚠️ timeout 120s MAIS instance créée: $PARTIAL — vérifier, la notification est partie"
-      curl -s -d "⚠️ timeout OCI MAIS instance créée: $PARTIAL — vérifier sur OCI" "$NTFY_TOPIC" >/dev/null 2>&1 || true
+      notify "⚠️ timeout OCI MAIS instance créée: $PARTIAL — vérifier sur OCI"
       exit 0
     fi
     log "   -> timeout 120s (aucune réponse OCI en 120s — tentative suivante dans 30s)"
