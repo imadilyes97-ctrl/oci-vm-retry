@@ -20,6 +20,7 @@ concurrency:
 permissions:
   actions: write   # pour que le run puisse se re-déclencher (gh workflow run)
   contents: read
+  secrets: write   # flag VM_NOTIFIED : notifier "VM déjà créée" UNE seule fois (anti-spam)
 
 jobs:
   retry:

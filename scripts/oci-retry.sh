@@ -48,10 +48,18 @@ notify(){
   esac
 }
 
-# ── 4. VM déjà créée ? → notification + arrêt (pas de re-déclenchement) ──
+# ── 4. VM déjà créée ? → notification (UNE SEULE FOIS) + arrêt ──
+# Anti-spam : le flag repo VM_NOTIFIED empêche de renvoyer la notif
+# "déjà créée" à chaque run schedule (4×/jour sinon). On ne le pose
+# qu'après un envoi ntfy réussi (retry au run suivant si échec).
 if "$OCI" compute instance list --compartment-id "$OCI_TENANCY" --all 2>/dev/null | grep -q 'rdp-main'; then
   log "VM rdp-main existe déjà — rien à faire."
-  notify "VM Oracle RDP déjà créée ✅ (IP: voir Oracle-RDP.rdp)"
+  if gh secret list --repo "$GITHUB_REPOSITORY" 2>/dev/null | grep -q '^VM_NOTIFIED'; then
+    log "   (déjà notifié — flag VM_NOTIFIED présent, pas de spam)"
+  else
+    notify "VM Oracle RDP déjà créée ✅ (IP: 129.151.228.78 — voir Oracle-RDP.rdp)"
+    gh secret set VM_NOTIFIED --repo "$GITHUB_REPOSITORY" --body "true" 2>/dev/null || log "   ⚠️ flag VM_NOTIFIED non posé (retenté au prochain run)"
+  fi
   exit 0
 fi
 
