@@ -1,0 +1,55 @@
+name: Check VM State (temporary)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install OCI CLI
+        run: pip install oci-cli -q
+      - name: Show VM state (public data only, never secrets)
+        shell: bash
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          set -u
+          KEYFILE="/tmp/oci_api_key.pem"
+          printf '%s\n' "$OCI_API_KEY" > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+          export OCI_CLI_USER="$OCI_USER"
+          export OCI_CLI_TENANCY="$OCI_TENANCY"
+          export OCI_CLI_FINGERPRINT="$OCI_FINGERPRINT"
+          export OCI_CLI_KEY_FILE="$KEYFILE"
+          export OCI_CLI_REGION="$OCI_REGION"
+          echo "=== INSTANCES ==="
+          oci compute instance list --compartment-id "$OCI_TENANCY" --all \
+            --query 'data[].{"display-name":display-name,"state":"lifecycle-state"}' \
+            --output table 2>&1 || echo "LIST_ERROR"
+          echo "=== RDP-MAIN DETAIL ==="
+          INST_ID=$(oci compute instance list --compartment-id "$OCI_TENANCY" --all \
+            --query 'data[?`"display-name"` == `"rdp-main"`].id | [0]' --raw-output 2>/dev/null)
+          if [ -n "$INST_ID" ] && [ "$INST_ID" != "null" ]; then
+            oci compute instance get --instance-id "$INST_ID" \
+              --query 'data.{"state":"lifecycle-state"}' --output table 2>&1
+            echo "=== PUBLIC IPs ==="
+            oci network public-ip list --compartment-id "$OCI_TENANCY" \
+              --query 'data[]."ip-address"' --output table 2>&1 | head -20
+            oci compute instance list-vnics --instance-id "$INST_ID" \
+              --query 'data[]."public-ip"' --output table 2>&1 | head -10
+          else
+            echo "INSTANCE rdp-main NON TROUVÉE (peut-être supprimée)"
+          fi
